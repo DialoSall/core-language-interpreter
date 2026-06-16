@@ -21,7 +21,7 @@ def main():
         parser = Parser(scanner)
         parse_tree = parser.parse_procedure()
 
-        # Keep semantic checks from Project 2
+        # Keep semantic checks from last version
         checker = SemanticChecker()
         checker.check(parse_tree)
 
