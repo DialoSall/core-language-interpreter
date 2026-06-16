@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.pyc
+
+# macOS files
+.DS_Store
+
+# Editor settings
+.vscode/
+
+# Tester-generated files
+*.student
+temp1
+temp2
+
+# Submission archives
+*.zip
+
+# Course-provided materials
+Correct/
+Error/
+tester.sh
+*.pdf
