@@ -8,16 +8,15 @@ __pycache__/
 # Editor settings
 .vscode/
 
-# Tester-generated files
-*.student
-temp1
-temp2
-
-# Submission archives
+# Course submission documentation
+README.txt
+*.pdf
 *.zip
 
-# Course-provided materials
+# Course-provided testing materials
 Correct/
 Error/
 tester.sh
-*.pdf
+*.student
+temp1
+temp2
