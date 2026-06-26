@@ -1,18 +1,31 @@
-from ParseTree import Decl, Assign, Print, Read, If, Loop
+from ParseTree import Decl, Function, Call, Assign, Print, Read, If, Loop
+
 
 class Memory:
     def __init__(self):
-        # Global variables
+        # Global variables live outside procedure frames
         self.global_vars = {}
 
-        #Stack of local scopes for begin/end, if, else, and loop blocks
-        self.local_scopes = []
+        # frames is a stack.
+        # Each frame is a list of local scopes.
+        # This lets procedure calls and recursion have separate local memory.
+        self.frames = []
+
+    def push_frame(self):
+        self.frames.append([])
+
+    def pop_frame(self):
+        self.frames.pop()
 
     def push_scope(self):
-        self.local_scopes.append({})
+        if len(self.frames) == 0:
+            raise Exception("ERROR: No active frame")
+        self.frames[-1].append({})
 
     def pop_scope(self):
-        self.local_scopes.pop()
+        if len(self.frames) == 0 or len(self.frames[-1]) == 0:
+            raise Exception("ERROR: No active scope")
+        self.frames[-1].pop()
 
     def declare(self, decl, is_global=False):
         if decl.var_type == "integer":
@@ -29,48 +42,68 @@ class Memory:
         if is_global:
             self.global_vars[decl.name] = entry
         else:
-            self.local_scopes[-1][decl.name] = entry
+            if len(self.frames) == 0 or len(self.frames[-1]) == 0:
+                raise Exception("ERROR: No local scope for declaration")
+            self.frames[-1][-1][decl.name] = entry
+
+    def bind_object_reference(self, formal_name, argument_entry):
+        if argument_entry["type"] != "object":
+            raise Exception("ERROR: Procedure argument must be object")
+
+        if len(self.frames) == 0 or len(self.frames[-1]) == 0:
+            raise Exception("ERROR: No local scope for parameter binding")
+
+        # Call by sharing:
+        # The formal parameter gets a new variable entry,
+        # but its value points to the same object as the argument.
+        self.frames[-1][-1][formal_name] = {
+            "type": "object",
+            "value": argument_entry["value"]
+        }
 
     def get_entry(self, name):
-        for scope in reversed(self.local_scopes):
-            if name in scope:
-                return scope[name]
-            
+        # Search only the current frame's local scopes.
+        # Do not search caller frames.
+        if len(self.frames) > 0:
+            for scope in reversed(self.frames[-1]):
+                if name in scope:
+                    return scope[name]
+
         if name in self.global_vars:
             return self.global_vars[name]
-        
+
         raise Exception(f"ERROR: Variable '{name}' not found during execution")
-    
+
     def get_value(self, name):
         entry = self.get_entry(name)
 
         if entry["type"] == "integer":
             return entry["value"]
-        
+
         obj = entry["value"]
 
         if obj is None:
             raise Exception(f"ERROR: Object variable '{name}' is null")
-        
+
         default_key = obj["default_key"]
 
         if default_key not in obj["values"]:
             raise Exception(f"ERROR: Default key missing for object '{name}'")
-        
+
         return obj["values"][default_key]
-    
+
     def set_value(self, name, value):
         entry = self.get_entry(name)
 
         if entry["type"] == "integer":
             entry["value"] = value
             return
-        
+
         obj = entry["value"]
 
         if obj is None:
             raise Exception(f"ERROR: Object variable '{name}' is null")
-        
+
         default_key = obj["default_key"]
         obj["values"][default_key] = value
 
@@ -78,8 +111,8 @@ class Memory:
         entry = self.get_entry(name)
 
         if entry["type"] != "object":
-            raise Exception(f"Error: Variable '{name}' is not object")
-        
+            raise Exception(f"ERROR: Variable '{name}' is not object")
+
         entry["value"] = {
             "default_key": default_key,
             "values": {
@@ -92,7 +125,7 @@ class Memory:
 
         if entry["type"] != "object":
             raise Exception(f"ERROR: Object variable '{name}' is not object")
-        
+
         obj = entry["value"]
 
         if obj is None:
@@ -158,16 +191,26 @@ class Executor:
         self.memory = Memory()
         self.data_reader = DataReader(data_file)
 
-    def execute_procedure(self, procedure):
-        # Execute global declarations before begin
-        if procedure.decl_seq is not None:
-            for decl in procedure.decl_seq.decls:
-                self.memory.declare(decl, is_global=True)
+        # procedure name -> Function node
+        self.procedures = {}
 
-        # Main begin/end block gets a local scope
+    def execute_procedure(self, procedure):
+        # First collect procedure declarations and global variables
+        if procedure.decl_seq is not None:
+            for item in procedure.decl_seq.decls:
+                if isinstance(item, Function):
+                    self.procedures[item.name] = item
+                elif isinstance(item, Decl):
+                    self.memory.declare(item, is_global=True)
+
+        # Execute main begin/end block in its own frame
+        self.memory.push_frame()
         self.memory.push_scope()
+
         self.execute_stmt_seq(procedure.stmt_seq)
+
         self.memory.pop_scope()
+        self.memory.pop_frame()
 
     def execute_stmt_seq(self, stmt_seq):
         for stmt in stmt_seq.stmts:
@@ -208,8 +251,44 @@ class Executor:
 
                 self.memory.set_value(stmt.var_name, self.eval_expr(stmt.update_expr))
 
+        elif isinstance(stmt, Call):
+            self.execute_call(stmt)
+
         else:
             raise Exception("ERROR: Unknown statement during execution")
+
+    def execute_call(self, call):
+        if call.name not in self.procedures:
+            raise Exception(f"ERROR: Procedure '{call.name}' has not been declared")
+
+        function = self.procedures[call.name]
+
+        if len(call.args) != len(function.params):
+            raise Exception(
+                f"ERROR: Procedure '{call.name}' called with wrong number of arguments"
+            )
+
+        # Resolve argument entries before pushing the callee frame.
+        # Once the callee frame is pushed, caller locals are intentionally hidden.
+        argument_entries = []
+
+        for arg in call.args:
+            argument_entries.append(self.memory.get_entry(arg))
+
+        # Create procedure call frame
+        self.memory.push_frame()
+        self.memory.push_scope()
+
+        # Bind formal parameters to the same object values as actual arguments
+        for formal, argument_entry in zip(function.params, argument_entries):
+            self.memory.bind_object_reference(formal, argument_entry)
+
+        # Execute procedure body
+        self.execute_stmt_seq(function.stmt_seq)
+
+        # Return from procedure
+        self.memory.pop_scope()
+        self.memory.pop_frame()
 
     def execute_assign(self, assign):
         if assign.kind == "normal":
@@ -245,10 +324,8 @@ class Executor:
 
             if cond.op == "or":
                 return left_value or self.eval_cond(cond.right)
-
             elif cond.op == "and":
                 return left_value and self.eval_cond(cond.right)
-
             else:
                 raise Exception("ERROR: Unknown condition operator")
 
@@ -261,10 +338,8 @@ class Executor:
 
         if cmpr.op == "==":
             return left == right
-
         elif cmpr.op == "<":
             return left < right
-
         else:
             raise Exception("ERROR: Unknown comparison operator")
 
@@ -273,7 +348,6 @@ class Executor:
 
         if expr.op == "+":
             return value + self.eval_expr(expr.expr)
-
         elif expr.op == "-":
             return value - self.eval_expr(expr.expr)
 
@@ -310,3 +384,4 @@ class Executor:
 
         else:
             raise Exception("ERROR: Unknown factor during execution")
+        

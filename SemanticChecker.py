@@ -1,8 +1,15 @@
-from ParseTree import Decl, Assign, Print, Read, If, Loop
+from ParseTree import Decl, Function, Call, Assign, Print, Read, If, Loop
 
 
 class SemanticChecker:
+    def __init__(self):
+        # procedure name -> Function node
+        self.procedures = {}
+
     def check(self, parse_tree):
+        # Reset procedure table each time we check a program
+        self.procedures = {}
+
         # scopes is a stack of dictionaries.
         # each dictionary maps variable name -> type.
         scopes = []
@@ -11,40 +18,93 @@ class SemanticChecker:
         scopes.append({})
 
         if parse_tree.decl_seq is not None:
-            for decl in parse_tree.decl_seq.decls:
-                self.declare(decl, scopes)
+            # First pass: collect all procedure declarations.
+            # This lets procedures call procedures that appear later.
+            for item in parse_tree.decl_seq.decls:
+                if isinstance(item, Function):
+                    if item.name in self.procedures:
+                        raise Exception(f"ERROR: Procedure '{item.name}' declared twice")
+
+                    if len(item.params) != len(set(item.params)):
+                        raise Exception(
+                            f"ERROR: Duplicate formal parameter in procedure '{item.name}'"
+                        )
+
+                    self.procedures[item.name] = item
+
+            # Second pass: declare only normal variables.
+            # Do not send Function nodes to declare().
+            for item in parse_tree.decl_seq.decls:
+                if isinstance(item, Decl):
+                    self.declare(item, scopes)
+
+            # Third pass: check procedure bodies.
+            for item in parse_tree.decl_seq.decls:
+                if isinstance(item, Function):
+                    self.check_function(item, scopes)
 
         # Local scope for the main begin/end block
         scopes.append({})
         self.check_stmt_seq(parse_tree.stmt_seq, scopes)
         scopes.pop()
 
+    def check_function(self, function, scopes):
+        # Each procedure body gets its own local scope.
+        # Formal parameters are local object variables.
+        scopes.append({})
+
+        for param in function.params:
+            if param in scopes[-1]:
+                raise Exception(f"ERROR: Duplicate formal parameter '{param}'")
+
+            scopes[-1][param] = "object"
+
+        self.check_stmt_seq(function.stmt_seq, scopes)
+
+        scopes.pop()
+
+    def check_call(self, call, scopes):
+        if call.name not in self.procedures:
+            raise Exception(f"ERROR: Procedure '{call.name}' has not been declared")
+
+        function = self.procedures[call.name]
+
+        if len(call.args) != len(function.params):
+            raise Exception(
+                f"ERROR: Procedure '{call.name}' called with wrong number of arguments"
+            )
+
+        # The project says we do not need to verify that arguments are all
+        # distinct or all object variables. But each argument name should exist.
+        for arg in call.args:
+            self.lookup(arg, scopes)
+
     def declare(self, decl, scopes):
         current_scope = scopes[-1]
 
         if decl.name in current_scope:
             raise Exception(f"ERROR: Variable '{decl.name}' declared twice in same scope")
-        
+
         current_scope[decl.name] = decl.var_type
 
     def lookup(self, name, scopes):
-        # Search from innermost scope outward
+        # Search from innermost scope outward.
         for scope in reversed(scopes):
             if name in scope:
                 return scope[name]
-            
+
         raise Exception(f"ERROR: Variable '{name}' used before declaration")
-    
+
     def require_object(self, name, scopes):
         var_type = self.lookup(name, scopes)
 
         if var_type != "object":
             raise Exception(f"ERROR: Variable '{name}' must be object")
-        
+
     def check_stmt_seq(self, stmt_seq, scopes):
         for stmt in stmt_seq.stmts:
             self.check_stmt(stmt, scopes)
-    
+
     def check_stmt(self, stmt, scopes):
         if isinstance(stmt, Decl):
             self.declare(stmt, scopes)
@@ -83,9 +143,12 @@ class SemanticChecker:
             self.check_stmt_seq(stmt.stmt_seq, scopes)
             scopes.pop()
 
+        elif isinstance(stmt, Call):
+            self.check_call(stmt, scopes)
+
         else:
             raise Exception("ERROR: Unknown statement type in semantic checker")
-    
+
     def check_assign(self, assign, scopes):
         # Make sure left-hand variable exists
         self.lookup(assign.name1, scopes)
@@ -164,3 +227,4 @@ class SemanticChecker:
 
         else:
             raise Exception("ERROR: Unknown factor type in semantic checker")
+        
