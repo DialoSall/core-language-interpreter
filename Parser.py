@@ -1,5 +1,5 @@
 from Core import Core
-from ParseTree import Procedure, DeclSeq, Decl, StmtSeq, Assign, Print, Read, Expr, Term, Factor, If, Loop, Cond, Cmpr
+from ParseTree import Procedure, DeclSeq, Decl, StmtSeq, Assign, Print, Read, Expr, Term, Factor, If, Loop, Cond, Cmpr, Function, Call
 
 
 class Parser:
@@ -30,7 +30,7 @@ class Parser:
 
         decl_seq = None
 
-        if self.current() in [Core.INTEGER, Core.OBJECT]:
+        if self.current() in [Core.INTEGER, Core.OBJECT, Core.PROCEDURE]:
             decl_seq = self.parse_decl_seq()
 
         self.match(Core.BEGIN)
@@ -47,11 +47,60 @@ class Parser:
     def parse_decl_seq(self):
         decls = []
 
-        while self.current() in [Core.INTEGER, Core.OBJECT]:
-            decls.append(self.parse_decl())
+        while self.current() in [Core.INTEGER, Core.OBJECT, Core.PROCEDURE]:
+            if self.current() == Core.PROCEDURE:
+                decls.append(self.parse_function())
+            else:
+                decls.append(self.parse_decl())
 
         return DeclSeq(decls)
     
+    def parse_function(self):
+        self.match(Core.PROCEDURE)
+
+        if self.current() != Core.ID:
+            raise Exception("ERROR: Expected procedure name")
+        
+        name = self.scanner.getID()
+        self.match(Core.ID)
+
+        self.match(Core.LPAREN)
+        self.match(Core.OBJECT)
+
+        params = self.parse_parameters()
+
+        if(len(params) != len(set(params))):
+            raise Exception("ERROR: Duplicate formal parameter")
+        
+        self.match(Core.RPAREN)
+        self.match(Core.IS)
+
+        stmt_seq = self.parse_stmt_seq()
+
+        self.match(Core.END)
+
+        return Function(name, params, stmt_seq)
+    
+    def parse_parameters(self):
+        params = []
+
+        if self.current() != Core.ID:
+            raise Exception("ERROR: Expected parameter name")
+        
+        params.append(self.scanner.getID())
+        self.match(Core.ID)
+
+        while self.current() == Core.COMMA:
+            self.match(Core.COMMA)
+
+            if self.current() != Core.ID:
+                raise Exception("ERROR: Expected parameter name")
+            
+            params.append(self.scanner.getID())
+            self.match(Core.ID)
+
+        return params
+
     def parse_decl(self):
         if self.current() == Core.INTEGER:
             var_type = "integer"
@@ -82,7 +131,8 @@ class Parser:
             Core.PRINT,
             Core.READ,
             Core.INTEGER,
-            Core.OBJECT
+            Core.OBJECT,
+            Core.BEGIN
         ]:
             stmts.append(self.parse_stmt())
 
@@ -104,8 +154,28 @@ class Parser:
             return self.parse_print()
         elif self.current() == Core.READ:
             return self.parse_read()
-        
+        elif self.current() == Core.BEGIN:
+            return self.parse_call()
+
         raise Exception("ERROR: invalid statement")
+    
+    def parse_call(self):
+        self.match(Core.BEGIN)
+
+        if self.current() != Core.ID:
+            raise Exception("ERROR: Expected procedure name in call")
+        
+        name = self.scanner.getID()
+        self.match(Core.ID)
+
+        self.match(Core.LPAREN)
+
+        args = self.parse_parameters()
+
+        self.match(Core.RPAREN)
+        self.match(Core.SEMICOLON)
+
+        return Call(name, args)
     
     def parse_assign(self):
         if self.current() != Core.ID:

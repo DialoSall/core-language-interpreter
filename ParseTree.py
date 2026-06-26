@@ -13,6 +13,17 @@ class Decl:
         self.var_type = var_type
         self.name = name
 
+class Function:
+    def __init__(self, name, params, stmt_seq):
+        self.name = name
+        self.params = params
+        self.stmt_seq = stmt_seq
+
+class Call:
+    def __init__(self, name, args):
+        self.name = name
+        self.args = args
+        
 class StmtSeq:
     def __init__(self, stmts):
         self.stmts = stmts
